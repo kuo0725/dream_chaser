@@ -1,0 +1,193 @@
+/** 
+ * 歡迎遊玩追夢者,這是一款使用 MAX7219 LED 矩陣的遊戲。 
+ * 螢幕中的點是你的夢想,你要避免接受打擊,以免夢想破碎!! 
+ * 參考網址: http://wayoda.github.io/LedControl/
+ */
+
+#include "LedControl.h"
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <LiquidCrystal_PCF8574.h>
+
+// LED Matrix Pins
+#define DATA_IN_PIN 12
+#define CLOCK_PIN 11
+#define CS_PIN 10
+
+LedControl lc = LedControl(DATA_IN_PIN, CLOCK_PIN, CS_PIN, 1);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+unsigned long delayTime = 1000; // 延遲時間
+String scoreString;
+int score;
+int hundreds;
+String scoreStr;
+String scoreArr[] = {"", "", ""};
+
+/* 設定按鈕的pin腳 */
+int pinLeft = 2; // 左按鍵
+int pinRight = 3; // 右按鍵
+
+volatile unsigned long buttonPressed;
+int buttonDelay = 150; // handle contact bounce
+volatile bool gameOver = false;
+
+/* 遊戲間的節奏(毫秒) */
+int tick;
+int tickCounter = 1;
+unsigned long now;
+
+/* display */
+int ship; // 夢想的起點
+int columns[] = {0, 0, 0, 0, 0, 0, 0, 0}; // 8 columns, every int is row 1-8.
+int randomInt;
+
+/*******************************************************
+ * 設定
+ */
+void setup() {
+    lcd.init();
+    lcd.backlight();
+    
+    gameOver = false;
+    hundreds = 0;
+    scoreArr[0] = "";
+    scoreArr[1] = "";
+    scoreArr[2] = "";
+    score = 0;
+    tick = 300;
+    tickCounter = 1;
+    ship = 3;
+    now = millis();
+    buttonPressed = millis();
+    randomSeed(analogRead(15)); // better random numbers
+
+    for(int i = 0; i < 8; i++) 
+        columns[i] = 0;
+
+    lc.shutdown(0, false);
+    lc.setIntensity(0, 1); // 設定亮度
+    lc.clearDisplay(0);
+    
+    pinMode(pinLeft, INPUT_PULLUP);
+    pinMode(pinRight, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(pinLeft), left, FALLING);
+    attachInterrupt(digitalPinToInterrupt(pinRight), right, FALLING);
+}
+
+void left() { // 設定左邊
+    if(millis() - buttonPressed > buttonDelay) { // handle switch contact bounce
+        if(ship != 0) 
+            ship--;
+        else 
+            ship = 7;
+
+        lc.clearDisplay(0);
+        buttonPressed = millis();
+    }
+}
+
+void right() { // 設定右按鍵
+    if(millis() - buttonPressed > buttonDelay) { // handle switch contact bounce 
+        if(ship != 7) 
+            ship++; 
+        else 
+            ship = 0;
+
+        lc.clearDisplay(0);
+        buttonPressed = millis();
+    }
+}
+
+void loop() {
+    if(tickCounter != 4) 
+        tickCounter++; 
+    else 
+        tickCounter = 1;
+
+    for(int i = 0; i < 8; i++) { 
+        if(columns[i] == 10) // 不顯示時刪除現實的殘酷 
+            columns[i] = 0; 
+        if(columns[i] != 0) // 讓現實的殘酷墜落 
+            columns[i]++;
+    }
+    
+    lc.clearDisplay(0);
+
+    // 設計7219的顯示
+    lc.setLed(0, 7, ship, true); // 夢想
+
+    for(int i = 0; i < 8; i++) { 
+        if(columns[i] > 0) {
+            lc.setLed(0, columns[i] - 2, i, true); 
+            lc.setLed(0, columns[i] - 3, i, true);
+        }
+    }
+
+    // 檢測夢想是否被現實的殘酷擊落
+    if(columns[ship] == 10 || columns[ship] == 9) {
+        lc.clearDisplay(0); 
+
+        // 設計擊中後會爆炸的程式
+        for(int i = 0; i < 4; i++) {
+            lc.setLed(0, 7, ship + i, true);
+            lc.setLed(0, 7, ship - i, true);
+            lc.setLed(0, 7 - i, ship + i, true);
+            lc.setLed(0, 7 - i, ship - i, true);
+            lc.setLed(0, 7 - static_cast<int>(1.5 * i), ship, true);
+        }
+
+        // 爆炸聲
+        unsigned long time = millis();
+        int randomSound = 1000;
+        while(millis() - time <= 250) {
+            randomSound--;
+            tone(9, random(randomSound, 1000));
+        }
+        lc.clearDisplay(0);
+        noTone(9);
+        delay(500);
+
+        // 設計分數計算方法
+        scoreStr = String(score);
+
+        // 矩陣最多只能顯示2位數字(00~99)
+        if(score < 100) {
+            for(int i = 0; i < 2; i++) {
+                if(scoreArr[i] == "0") scoreArr[i] = "0";
+                if(scoreArr[i] == "1") scoreArr[i] = "1";
+                if(scoreArr[i] == "2") scoreArr[i] = "2";
+                if(scoreArr[i] == "3") scoreArr[i] = "3";
+                if(scoreArr[i] == "4") scoreArr[i] = "4";
+                if(scoreArr[i] == "5") scoreArr[i] = "5";
+                if(scoreArr[i] == "6") scoreArr[i] = "6";
+                if(scoreArr[i] == "7") scoreArr[i] = "7";
+                if(scoreArr[i] == "8") scoreArr[i] = "8";
+                if(scoreArr[i] == "9") scoreArr[i] = "9";
+            }
+        } else { // 如果分數 > 100 , 只顯示分數的最後兩位 
+            for(int i = 1; i < 3; i++) {
+                if(scoreArr[i] == "0") scoreArr[i] = "0";
+                if(scoreArr[i] == "1") scoreArr[i] = "1";
+                if(scoreArr[i] == "2") scoreArr[i] = "2";
+                if(scoreArr[i] == "3") scoreArr[i] = "3";
+                if(scoreArr[i] == "4") scoreArr[i] = "4";
+                if(scoreArr[i] == "5") scoreArr[i] = "5";
+                if(scoreArr[i] == "6") scoreArr[i] = "6";
+                if(scoreArr[i] == "7") scoreArr[i] = "7";
+                if(scoreArr[i] == "8") scoreArr[i] = "8";
+                if(scoreArr[i] == "9") scoreArr[i] = "9";
+            }
+        }
+        
+        gameOver = true; // 遊戲結束
+        while(gameOver == true) {
+            lcd.setCursor(2, 1); // (colum, row）從第排的第三個位置開始顯示
+            lcd.print("Dreams Broken");
+            break; // 避免無限迴圈
+        }
+        
+        lcd.setCursor(2, 0); // (colum, row）從第一排的第三個位置開始顯示
+        lcd.print("Score：" + String(score + 1)); // 繪製分數
+    }
+}
